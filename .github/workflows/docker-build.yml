@@ -1,0 +1,64 @@
+name: Build and Push ARM64 Image to GHCR
+
+on:
+  push:
+    branches:
+      - master  # 当代码推送到 master 分支时触发
+    tags:
+      - 'v*'    # 当推送版本标签 (如 v1.20.11) 时触发
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    # 必须设置 packages: write 权限才能推送到 ghcr.io
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # 1. 检出代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 设置 QEMU (用于在 x86 机器上模拟 ARM64 环境构建)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 3. 设置 Docker Buildx (支持多架构构建的引擎)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 4. 登录到 GitHub Container Registry
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # GitHub Actions 自动提供的 Token，无需手动配置
+
+      # 5. 自动生成镜像的 Tag 和 Labels
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      # 6. 构建并推送镜像
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # 指定构建架构为 arm64 (如果你同时需要 amd64，可以写成 linux/amd64,linux/arm64)
+          platforms: linux/arm64 
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 开启 GitHub Actions 缓存机制，极大加快后续构建速度
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
